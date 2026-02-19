@@ -14,13 +14,22 @@ class BedBathingEnv(AssistiveEnv):
             action = np.concatenate([action['robot'], action['human']])
         self.take_step(action)
 
+        # Keep human frozen after physics step
+        if not self.human.controllable:
+            self._freeze_human()
+
         obs = self._get_obs()
 
         # Get human preferences
         end_effector_velocity = np.linalg.norm(self.robot.get_velocity(self.robot.left_end_effector))
         preferences_score = self.human_preferences(end_effector_velocity=end_effector_velocity, total_force_on_human=self.total_force_on_human, tool_force_at_target=self.tool_force_on_human)
 
-        reward_distance = -min(self.tool.get_closest_points(self.human, distance=5.0)[-1])
+        closest_points = self.tool.get_closest_points(self.human, distance=5.0)[-1]
+        # Safeguard: if no closest points are returned, skip distance penalty
+        if len(closest_points) == 0:
+            reward_distance = 0.0
+        else:
+            reward_distance = -min(closest_points)
         reward_action = -np.linalg.norm(action) # Penalize actions
         reward_new_contact_points = self.new_contact_points # Reward new contact points on a person
 
@@ -33,10 +42,10 @@ class BedBathingEnv(AssistiveEnv):
         done = self.iteration >= 200
 
         if not self.human.controllable:
-            return obs, reward, done, info
+            return obs, reward, done, False, info
         else:
             # Co-optimization with both human and robot controllable
-            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': info, 'human': info}
+            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': False, 'human': False}, {'robot': info, 'human': info}
 
     def get_total_force(self):
         total_force_on_human = np.sum(self.robot.get_contact_points(self.human)[-1])
@@ -111,30 +120,55 @@ class BedBathingEnv(AssistiveEnv):
 
     def reset(self):
         super(BedBathingEnv, self).reset()
-        self.build_assistive_env('bed', fixed_human_base=False)
+        # Fix human base to prevent instability/jumping
+        self.build_assistive_env('bed', fixed_human_base=True)
 
         self.furniture.set_friction(self.furniture.base, friction=5)
 
-        # Setup human in the air and let them settle into a resting pose on the bed
-        joints_positions = [(self.human.j_right_shoulder_x, 30)]
-        self.human.setup_joints(joints_positions, use_static_joints=False, reactive_force=None)
-        self.human.set_base_pos_orient([-0.15, 0.2, 0.95], [-np.pi/2.0, 0, 0])
+        # Set joint angles for human joints (in degrees) - lying down pose
+        # All joints near 0 for a flat lying position, slight arm angle for reachability
+        joints_positions = [
+            (self.human.j_right_shoulder_x, 30),   # Right arm slightly raised
+            (self.human.j_right_elbow, 0),         # Elbow straight
+            (self.human.j_left_elbow, 0),          # Left elbow straight
+            (self.human.j_right_hip_x, 0),         # Hips straight (lying flat)
+            (self.human.j_right_knee, 0),          # Knees straight
+            (self.human.j_left_hip_x, 0),          # Left hip straight
+            (self.human.j_left_knee, 0),           # Left knee straight
+        ]
 
-        p.setGravity(0, 0, -1, physicsClientId=self.id)
-
-        # Add small variation in human joint positions
-        motor_indices, motor_positions, motor_velocities, motor_torques = self.human.get_motor_joint_states()
-        self.human.set_joint_angles(motor_indices, self.np_random.uniform(-0.1, 0.1, size=len(motor_indices)))
-
-        # Let the person settle on the bed
-        for _ in range(100):
-            p.stepSimulation(physicsClientId=self.id)
-
-        # Lock human joints and set velocities to 0
-        joints_positions = []
+        # Re-freeze human after pose initialization
+        if not self.human.controllable:
+            self._freeze_human()
         self.human.setup_joints(joints_positions, use_static_joints=True, reactive_force=None, reactive_gain=0.01)
-        self.human.set_mass(self.human.base, mass=0)
-        self.human.set_base_velocity(linear_velocity=[0, 0, 0], angular_velocity=[0, 0, 0])
+
+        # Position human lying on bed - rotation [-pi/2, 0, 0] makes them lie on back
+        self.human.set_base_pos_orient([-0.15, 0.2, 0.85], [-np.pi/2.0, 0, 0])
+
+        # Make human completely static (same approach as scratch_itch.py)
+        # 1. Make human base kinematic (mass=0 means no dynamics)
+        p.changeDynamics(self.human.body, -1, mass=0, physicsClientId=self.id)
+        
+        # 2. Set lying pose joint angles directly using resetJointState
+        # All joints at 0 for lying flat, except slight arm angle
+        lying_joints = {
+            self.human.j_right_hip_x: 0,       # Hips straight
+            self.human.j_left_hip_x: 0,        # Left hip straight
+            self.human.j_right_knee: 0,        # Knees straight
+            self.human.j_left_knee: 0,         # Left knee straight
+            self.human.j_right_shoulder_x: 0.5, # Arm slightly raised for robot access
+            self.human.j_right_elbow: 0,       # Elbow straight
+            self.human.j_left_elbow: 0,        # Left elbow straight
+        }
+        
+        # 3. Reset all joint states and make all links kinematic
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            # Set target position (use lying pose if defined, else 0)
+            target_pos = lying_joints.get(joint_idx, 0)
+            # Directly set joint state (bypasses physics)
+            p.resetJointState(self.human.body, joint_idx, target_pos, 0, physicsClientId=self.id)
+            # Make link kinematic (mass=0)
+            p.changeDynamics(self.human.body, joint_idx, mass=0, physicsClientId=self.id)
 
         shoulder_pos = self.human.get_pos_orient(self.human.right_shoulder)[0]
         elbow_pos = self.human.get_pos_orient(self.human.right_elbow)[0]
@@ -143,7 +177,12 @@ class BedBathingEnv(AssistiveEnv):
         # Initialize the tool in the robot's gripper
         self.tool.init(self.robot, self.task, self.directory, self.id, self.np_random, right=False, mesh_scale=[1]*3)
 
-        target_ee_pos = np.array([-0.6, 0.2, 1]) + self.np_random.uniform(-0.05, 0.05, size=3)
+        # Reset selected target for new episode
+        self._selected_target_pos = None
+
+        # Position robot closer to the human arm (use elbow position as reference)
+        arm_center = (shoulder_pos + elbow_pos) / 2
+        target_ee_pos = np.array([arm_center[0] - 0.3, arm_center[1], arm_center[2] + 0.1]) + self.np_random.uniform(-0.05, 0.05, size=3)
         target_ee_orient = self.get_quaternion(self.robot.toc_ee_orient_rpy[self.task])
         base_position = self.init_robot_pose(target_ee_pos, target_ee_orient, [(target_ee_pos, target_ee_orient)], [(shoulder_pos, None), (elbow_pos, None), (wrist_pos, None)], arm='left', tools=[self.tool], collision_objects=[self.human, self.furniture], wheelchair_enabled=False)
 
@@ -158,17 +197,44 @@ class BedBathingEnv(AssistiveEnv):
 
         self.generate_targets()
 
-        p.setGravity(0, 0, -9.81, physicsClientId=self.id)
+        # For non-mobile robots, disable gravity on arm links
         if not self.robot.mobile:
-            self.robot.set_gravity(0, 0, 0)
-        self.human.set_gravity(0, 0, -1)
-        self.tool.set_gravity(0, 0, 0)
+            for joint_idx in self.robot.controllable_joint_indices:
+                p.changeDynamics(self.robot.body, joint_idx, mass=0, physicsClientId=self.id)
+        
+        # Disable gravity on tool links
+        for link_idx in range(-1, p.getNumJoints(self.tool.body, physicsClientId=self.id)):
+            p.changeDynamics(self.tool.body, link_idx, mass=0, physicsClientId=self.id)
 
         # Enable rendering
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.id)
 
         self.init_env_variables()
         return self._get_obs()
+
+    def _freeze_human(self):
+        """Re-apply kinematic state to keep human completely frozen."""
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            joint_state = p.getJointState(self.human.body, joint_idx, physicsClientId=self.id)
+            p.resetJointState(self.human.body, joint_idx, joint_state[0], 0, physicsClientId=self.id)
+        p.resetBaseVelocity(self.human.body, [0, 0, 0], [0, 0, 0], physicsClientId=self.id)
+
+    @property
+    def target_pos(self):
+        """Return a random target position on the arm for baseline compatibility."""
+        # Return the selected random target, or pick one if not set
+        if hasattr(self, '_selected_target_pos') and self._selected_target_pos is not None:
+            return self._selected_target_pos
+        
+        # Combine all targets and pick a random one
+        all_targets = self.targets_pos_upperarm_world + self.targets_pos_forearm_world
+        if all_targets:
+            # Pick a random target from the arm
+            idx = self.np_random.integers(0, len(all_targets))
+            self._selected_target_pos = all_targets[idx]
+            return self._selected_target_pos
+        else:
+            return np.array([0, 0, 0])
 
     def generate_targets(self):
         self.target_indices_to_ignore = []

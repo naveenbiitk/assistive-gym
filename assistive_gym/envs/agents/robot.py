@@ -4,6 +4,7 @@ from .agent import Agent
 
 class Robot(Agent):
     def __init__(self, controllable_joints, right_arm_joint_indices, left_arm_joint_indices, wheel_joint_indices, right_end_effector, left_end_effector, right_gripper_indices, left_gripper_indices, gripper_pos, right_tool_joint, left_tool_joint, tool_pos_offset, tool_orient_offset, right_gripper_collision_indices, left_gripper_collision_indices, toc_base_pos_offset, toc_ee_orient_rpy, wheelchair_mounted, half_range=False, controllable_joint_indices=None, action_duplication=None, action_multiplier=1, flags=None):
+        print(f"DEBUG: Robot.__init__ - controllable_joints='{controllable_joints}', mobile will be: {'wheel' in controllable_joints}, controllable_joint_indices param: {controllable_joint_indices}")
         self.controllable_joints = controllable_joints if controllable_joint_indices is None else ''
         self.right_arm_joint_indices = right_arm_joint_indices # Controllable arm joints
         self.left_arm_joint_indices = left_arm_joint_indices # Controllable arm joints
@@ -11,9 +12,11 @@ class Robot(Agent):
         self.mobile = 'wheel' in controllable_joints
         if controllable_joint_indices is not None:
             self.controllable_joint_indices = controllable_joint_indices
+            print(f"DEBUG: Using provided controllable_joint_indices: {controllable_joint_indices}")
         else:
             self.controllable_joint_indices = self.wheel_joint_indices if self.mobile else []
             self.controllable_joint_indices = self.controllable_joint_indices + (self.right_arm_joint_indices if 'right' in controllable_joints else self.left_arm_joint_indices if 'left' in controllable_joints else self.right_arm_joint_indices + self.left_arm_joint_indices)
+            print(f"DEBUG: Computed controllable_joint_indices: {self.controllable_joint_indices}")
         self.right_end_effector = right_end_effector # Used to get the pose of the end effector
         self.left_end_effector = left_end_effector # Used to get the pose of the end effector
         self.right_gripper_indices = right_gripper_indices # Gripper actuated joints
@@ -33,10 +36,19 @@ class Robot(Agent):
         self.action_multiplier = action_multiplier
         self.flags = flags # Used to store any additional information for the robot
         self.has_single_arm = self.right_end_effector == self.left_end_effector
-        self.motor_forces = 1.0
-        self.motor_gains = 0.05
+        # Stronger default motors so arms actually move under load
+        # (wheels and heavy links need higher forces than 1.0)
+        self.motor_forces = 200.0
+        self.motor_gains = 0.1
         self.skip_pose_optimization = False
+        
+        # Store computed controllable_joint_indices before calling super().__init__()
+        # because Agent.__init__() will reset it
+        computed_controllable = self.controllable_joint_indices
         super(Robot, self).__init__()
+        # Restore the computed controllable_joint_indices
+        self.controllable_joint_indices = computed_controllable
+        print(f"DEBUG: After super().__init__(), restored controllable_joint_indices: {self.controllable_joint_indices}")
 
     def enable_wheels(self):
         self.mobile = True
@@ -44,7 +56,8 @@ class Robot(Agent):
         self.controllable_joint_indices = self.wheel_joint_indices + (self.right_arm_joint_indices if 'right' in self.controllable_joints else self.left_arm_joint_indices if 'left' in self.controllable_joints else self.right_arm_joint_indices + self.left_arm_joint_indices)
 
     def init(self, body, id, np_random):
-        super(Robot, self).init(body, id, np_random)
+        # Pass the computed controllable_joint_indices to Agent.init so it doesn't default to all joints
+        super(Robot, self).init(body, id, np_random, indices=self.controllable_joint_indices)
         if self.mobile:
             self.controllable_joint_lower_limits[:len(self.wheel_joint_indices)] = -np.inf
             self.controllable_joint_upper_limits[:len(self.wheel_joint_indices)] = np.inf

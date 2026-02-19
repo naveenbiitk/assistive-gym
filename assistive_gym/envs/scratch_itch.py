@@ -11,6 +11,10 @@ class ScratchItchEnv(AssistiveEnv):
         if self.human.controllable:
             action = np.concatenate([action['robot'], action['human']])
         self.take_step(action)
+        
+        # Keep human frozen after physics step
+        if not self.human.controllable:
+            self._freeze_human()
 
         obs = self._get_obs()
         # print(np.array_str(obs, precision=3, suppress_small=True))
@@ -38,10 +42,11 @@ class ScratchItchEnv(AssistiveEnv):
         done = self.iteration >= 200
 
         if not self.human.controllable:
-            return obs, reward, done, info
+            # Return in Gymnasium format: obs, reward, terminated, truncated, info
+            return obs, reward, done, False, info
         else:
             # Co-optimization with both human and robot controllable
-            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': info, 'human': info}
+            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': False, 'human': False}, {'robot': info, 'human': info}
 
     def get_total_force(self):
         total_force_on_human = np.sum(self.robot.get_contact_points(self.human)[-1])
@@ -57,7 +62,7 @@ class ScratchItchEnv(AssistiveEnv):
         return total_force_on_human, tool_force, tool_force_at_target, None if target_contact_pos is None else np.array(target_contact_pos)
 
     def _get_obs(self, agent=None):
-        tool_pos, tool_orient = self.tool.get_pos_orient(1)
+        tool_pos, tool_orient = self.tool.get_pos_orient(-1)
         tool_pos_real, tool_orient_real = self.robot.convert_to_realworld(tool_pos, tool_orient)
         robot_joint_angles = self.robot.get_joint_angles(self.robot.controllable_joint_indices)
         # Fix joint angles to be in [-pi, pi]
@@ -104,6 +109,25 @@ class ScratchItchEnv(AssistiveEnv):
         joints_positions = [(self.human.j_right_shoulder_x, 30), (self.human.j_right_elbow, -90), (self.human.j_left_elbow, -90), (self.human.j_right_hip_x, -90), (self.human.j_right_knee, 80), (self.human.j_left_hip_x, -90), (self.human.j_left_knee, 80)]
         self.human.setup_joints(joints_positions, use_static_joints=True, reactive_force=None if self.human.controllable else 1, reactive_gain=0.01)
 
+        # Make human completely static BEFORE any physics steps
+        # 1. Make human base kinematic
+        p.changeDynamics(self.human.body, -1, mass=0, physicsClientId=self.id)
+        
+        # 2. Set sitting pose and make all links kinematic
+        sitting_joints = {
+            self.human.j_right_hip_x: -1.57,
+            self.human.j_left_hip_x: -1.57,
+            self.human.j_right_knee: 1.4,
+            self.human.j_left_knee: 1.4,
+            self.human.j_right_shoulder_x: 0.5,
+            self.human.j_right_elbow: -1.57,
+            self.human.j_left_elbow: -1.57,
+        }
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            target_pos = sitting_joints.get(joint_idx, 0)
+            p.resetJointState(self.human.body, joint_idx, target_pos, 0, physicsClientId=self.id)
+            p.changeDynamics(self.human.body, joint_idx, mass=0, physicsClientId=self.id)
+
         shoulder_pos = self.human.get_pos_orient(self.human.right_shoulder)[0]
         elbow_pos = self.human.get_pos_orient(self.human.right_elbow)[0]
         wrist_pos = self.human.get_pos_orient(self.human.right_wrist)[0]
@@ -120,10 +144,12 @@ class ScratchItchEnv(AssistiveEnv):
 
         self.generate_target()
 
-        if not self.robot.mobile:
-            self.robot.set_gravity(0, 0, 0)
-        self.human.set_gravity(0, 0, 0)
-        self.tool.set_gravity(0, 0, 0)
+        # Disable gravity on tool links
+        for link_idx in range(p.getNumJoints(self.tool.body, physicsClientId=self.id)):
+            p.changeDynamics(self.tool.body, link_idx, mass=0, physicsClientId=self.id)
+
+        # Re-freeze human after init_robot_pose physics steps
+        self._freeze_human()
 
         # Enable rendering
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.id)
@@ -134,9 +160,11 @@ class ScratchItchEnv(AssistiveEnv):
     def generate_target(self):
         # Randomly select either upper arm or forearm for the target limb to scratch
         if self.human.gender == 'male':
-            self.limb, length, radius = [[self.human.right_shoulder, 0.279, 0.043], [self.human.right_elbow, 0.257, 0.033]][self.np_random.randint(2)]
+            self.limb, length, radius = [[self.human.right_shoulder, 0.279, 0.043], [self.human.right_elbow, 0.257, 0.033]][self.np_random.integers(2)
+]
         else:
-            self.limb, length, radius = [[self.human.right_shoulder, 0.264, 0.0355], [self.human.right_elbow, 0.234, 0.027]][self.np_random.randint(2)]
+            self.limb, length, radius = [[self.human.right_shoulder, 0.264, 0.0355], [self.human.right_elbow, 0.234, 0.027]][self.np_random.integers(2)
+]
         self.target_on_arm = self.util.point_on_capsule(p1=np.array([0, 0, 0]), p2=np.array([0, 0, -length]), radius=radius, theta_range=(0, np.pi*2))
         arm_pos, arm_orient = self.human.get_pos_orient(self.limb)
         target_pos, target_orient = p.multiplyTransforms(arm_pos, arm_orient, self.target_on_arm, [0, 0, 0, 1], physicsClientId=self.id)
@@ -150,4 +178,13 @@ class ScratchItchEnv(AssistiveEnv):
         target_pos, target_orient = p.multiplyTransforms(arm_pos, arm_orient, self.target_on_arm, [0, 0, 0, 1], physicsClientId=self.id)
         self.target_pos = np.array(target_pos)
         self.target.set_base_pos_orient(self.target_pos, [0, 0, 0, 1])
+
+    def _freeze_human(self):
+        """Re-apply kinematic state to keep human completely frozen."""
+        # Reset all joint velocities to zero and maintain position
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            joint_state = p.getJointState(self.human.body, joint_idx, physicsClientId=self.id)
+            p.resetJointState(self.human.body, joint_idx, joint_state[0], 0, physicsClientId=self.id)
+        # Reset base velocity to zero
+        p.resetBaseVelocity(self.human.body, [0, 0, 0], [0, 0, 0], physicsClientId=self.id)
 

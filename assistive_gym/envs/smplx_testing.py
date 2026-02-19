@@ -12,7 +12,7 @@ class SMPLXTestingEnv(AssistiveEnv):
 
     def step(self, action):
         self.take_step(action, gains=0.05, forces=1.0)
-        return [], 0, False, {}
+        return [], 0, False, False, {}
 
     def _get_obs(self, agent=None):
         return []

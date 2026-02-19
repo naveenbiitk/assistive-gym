@@ -104,9 +104,12 @@ class FeedingMeshEnv(FeedingEnv):
         self.bowl.init('bowl', self.directory, self.id, self.np_random)
 
         if not self.robot.mobile:
-            self.robot.set_gravity(0, 0, 0)
-        self.human.set_gravity(0, 0, 0)
-        self.tool.set_gravity(0, 0, 0)
+            for joint_idx in self.robot.controllable_joint_indices:
+                p.changeDynamics(self.robot.body, joint_idx, mass=0, physicsClientId=self.id)
+        
+        # Disable gravity on tool links by setting mass to 0
+        for link_idx in range(p.getNumJoints(self.tool.body, physicsClientId=self.id)):
+            p.changeDynamics(self.tool.body, link_idx, mass=0, physicsClientId=self.id)
 
         p.setPhysicsEngineParameter(numSubSteps=4, numSolverIterations=10, physicsClientId=self.id)
 
@@ -124,6 +127,8 @@ class FeedingMeshEnv(FeedingEnv):
                   [219./256., 50./256., 54./256., 1], [72./256., 133./256., 237./256., 1]]
         for i, f in enumerate(self.foods):
             p.changeVisualShape(f.body, -1, rgbaColor=colors[i%len(colors)], physicsClientId=self.id)
+            # Disable gravity on food particles by setting mass to 0
+            p.changeDynamics(f.body, -1, mass=0, physicsClientId=self.id)
         self.total_food_count = len(self.foods)
         self.foods_active = [f for f in self.foods]
 
@@ -134,6 +139,15 @@ class FeedingMeshEnv(FeedingEnv):
         for _ in range(25):
             p.stepSimulation(physicsClientId=self.id)
 
+        # Completely freeze human in place - make it kinematic and disable all physics
+        self.human.set_base_velocity(linear_velocity=[0, 0, 0], angular_velocity=[0, 0, 0])
+        # Disable all human joint motors to prevent shaking
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            p.setJointMotorControl2(self.human.body, joint_idx, p.POSITION_CONTROL, 
+                                   targetPosition=0, force=0, physicsClientId=self.id)
+            # Also set velocities to zero
+            p.resetJointState(self.human.body, joint_idx, targetValue=0, targetVelocity=0, physicsClientId=self.id)
+        
         self.init_env_variables()
         return self._get_obs()
 

@@ -5,6 +5,7 @@ from .robot import Robot
 
 class Stretch(Robot):
     def __init__(self, controllable_joints='right'):
+        print(f"DEBUG: Stretch.__init__ called with controllable_joints='{controllable_joints}'")
         # right_arm_joint_indices = [0, 1, 3, 5, 6, 7, 8, 9] # Controllable arm joints
         right_arm_joint_indices = [3, 5, 9] # Controllable arm joints
         left_arm_joint_indices = right_arm_joint_indices # Controllable arm joints
@@ -48,6 +49,7 @@ class Stretch(Robot):
                              'arm_manipulation': [0, 0, np.pi/2.0]}
         wheelchair_mounted = False
 
+        # Original gains, forces, and action multipliers
         self.gains = [0.1]*2 + [0.01] + [0.025]*5
         self.forces = [10]*2 + [20] + [10]*5
         self.action_duplication = [1, 1, 1, 4, 1] if 'wheel' in controllable_joints else [1, 4, 1] # The urdf models the prismatic arm as multiple joints, but we want only 1 action to control all of them.
@@ -78,9 +80,6 @@ class Stretch(Robot):
         self.set_mass(-1, 10)
         self.set_mass(0, 10)
         self.set_mass(1, 10)
-
-        # Disable friction of the robot base since it touches the ground
-        self.set_friction(self.base, friction=0)
 
         # Recolor robot
         white = [1, 1, 1, 1]

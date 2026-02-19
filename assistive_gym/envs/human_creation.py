@@ -277,7 +277,26 @@ class HumanCreation:
         linkLowerLimits.extend(np.array([np.deg2rad(-127), np.deg2rad(-45), np.deg2rad(-40), 0, np.deg2rad(-35), np.deg2rad(-24), np.deg2rad(-35)]))
         linkUpperLimits.extend(np.array([np.deg2rad(30), np.deg2rad(40), np.deg2rad(45), np.deg2rad(130), np.deg2rad(38), np.deg2rad(23), np.deg2rad(43)]))
 
-        human = p.createMultiBody(baseMass=0 if static else m*0.1, baseCollisionShapeIndex=chest_c, baseVisualShapeIndex=chest_v, basePosition=chest_p, baseOrientation=[0, 0, 0, 1], linkMasses=linkMasses, linkCollisionShapeIndices=linkCollisionShapeIndices, linkVisualShapeIndices=linkVisualShapeIndices, linkPositions=linkPositions, linkOrientations=linkOrientations, linkInertialFramePositions=linkInertialFramePositions, linkInertialFrameOrientations=linkInertialFrameOrientations, linkParentIndices=linkParentIndices, linkJointTypes=linkJointTypes, linkJointAxis=linkJointAxis, linkLowerLimits=linkLowerLimits, linkUpperLimits=linkUpperLimits, useMaximalCoordinates=False, flags=p.URDF_USE_SELF_COLLISION, physicsClientId=self.id)
+        human = p.createMultiBody(
+    baseMass=0 if static else m*0.1,
+    baseCollisionShapeIndex=chest_c,
+    baseVisualShapeIndex=chest_v,
+    basePosition=chest_p,
+    baseOrientation=[0, 0, 0, 1],
+    linkMasses=linkMasses,
+    linkCollisionShapeIndices=linkCollisionShapeIndices,
+    linkVisualShapeIndices=linkVisualShapeIndices,
+    linkPositions=linkPositions,
+    linkOrientations=linkOrientations,
+    linkInertialFramePositions=linkInertialFramePositions,
+    linkInertialFrameOrientations=linkInertialFrameOrientations,
+    linkParentIndices=linkParentIndices,
+    linkJointTypes=linkJointTypes,
+    linkJointAxis=linkJointAxis,
+    useMaximalCoordinates=False,
+    flags=p.URDF_USE_SELF_COLLISION,
+    physicsClientId=self.id
+)
 
         # Self collision has been enabled for the person
         # For stability: Remove all collisions except between the arms/legs and the other body parts

@@ -25,9 +25,4 @@ register(
     max_episode_steps=200,
 )
 
-register(
-    id='SMPLXTesting-v1',
-    entry_point='assistive_gym.envs:SMPLXTestingEnv',
-    max_episode_steps=200,
-)
 

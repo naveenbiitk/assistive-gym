@@ -13,6 +13,10 @@ class FeedingEnv(AssistiveEnv):
         if self.human.controllable:
             action = np.concatenate([action['robot'], action['human']])
         self.take_step(action)
+        
+        # Keep human frozen (re-apply kinematic state after physics)
+        if not self.human.controllable:
+            self._freeze_human()
 
         obs = self._get_obs()
 
@@ -37,10 +41,10 @@ class FeedingEnv(AssistiveEnv):
         done = self.iteration >= 200
 
         if not self.human.controllable:
-            return obs, reward, done, info
+            return obs, reward, done, False, info
         else:
             # Co-optimization with both human and robot controllable
-            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': info, 'human': info}
+            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': False, 'human': False}, {'robot': info, 'human': info}
 
     def get_total_force(self):
         robot_force_on_human = np.sum(self.robot.get_contact_points(self.human)[-1])
@@ -125,6 +129,24 @@ class FeedingEnv(AssistiveEnv):
         joints_positions += [(self.human.j_head_x, self.np_random.uniform(-30, 30)), (self.human.j_head_y, self.np_random.uniform(-30, 30)), (self.human.j_head_z, self.np_random.uniform(-30, 30))]
         self.human.setup_joints(joints_positions, use_static_joints=True, reactive_force=None)
 
+        # Make human completely static BEFORE any physics steps
+        # 1. Make human base kinematic
+        p.changeDynamics(self.human.body, -1, mass=0, physicsClientId=self.id)
+        
+        # 2. Set sitting pose and make all links kinematic
+        sitting_joints = {
+            self.human.j_right_hip_x: -1.57,
+            self.human.j_left_hip_x: -1.57,
+            self.human.j_right_knee: 1.4,
+            self.human.j_left_knee: 1.4,
+            self.human.j_right_elbow: -1.57,
+            self.human.j_left_elbow: -1.57,
+        }
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            target_pos = sitting_joints.get(joint_idx, 0)
+            p.resetJointState(self.human.body, joint_idx, target_pos, 0, physicsClientId=self.id)
+            p.changeDynamics(self.human.body, joint_idx, mass=0, physicsClientId=self.id)
+
         # Create a table
         self.table = Furniture()
         self.table.init('table', self.directory, self.id, self.np_random)
@@ -148,11 +170,12 @@ class FeedingEnv(AssistiveEnv):
         self.bowl.init('bowl', self.directory, self.id, self.np_random)
 
         if not self.robot.mobile:
-            self.robot.set_gravity(0, 0, 0)
-        self.human.set_gravity(0, 0, 0)
-        self.tool.set_gravity(0, 0, 0)
-
-        # p.setPhysicsEngineParameter(numSubSteps=4, numSolverIterations=10, physicsClientId=self.id)
+            for joint_idx in self.robot.controllable_joint_indices:
+                p.changeDynamics(self.robot.body, joint_idx, mass=0, physicsClientId=self.id)
+        
+        # Disable gravity on tool links
+        for link_idx in range(p.getNumJoints(self.tool.body, physicsClientId=self.id)):
+            p.changeDynamics(self.tool.body, link_idx, mass=0, physicsClientId=self.id)
 
         # Generate food
         spoon_pos, spoon_orient = self.tool.get_base_pos_orient()
@@ -168,6 +191,8 @@ class FeedingEnv(AssistiveEnv):
                   [219./256., 50./256., 54./256., 1], [72./256., 133./256., 237./256., 1]]
         for i, f in enumerate(self.foods):
             p.changeVisualShape(f.body, -1, rgbaColor=colors[i%len(colors)], physicsClientId=self.id)
+            # Disable gravity on food particles by setting mass to 0
+            p.changeDynamics(f.body, -1, mass=0, physicsClientId=self.id)
         self.total_food_count = len(self.foods)
         self.foods_active = [f for f in self.foods]
 
@@ -177,7 +202,22 @@ class FeedingEnv(AssistiveEnv):
         # Drop food in the spoon
         for _ in range(25):
             p.stepSimulation(physicsClientId=self.id)
-
+        
+        # Re-apply kinematic state to human after physics steps
+        p.changeDynamics(self.human.body, -1, mass=0, physicsClientId=self.id)
+        sitting_joints = {
+            self.human.j_right_hip_x: -1.57,
+            self.human.j_left_hip_x: -1.57,
+            self.human.j_right_knee: 1.4,
+            self.human.j_left_knee: 1.4,
+            self.human.j_right_elbow: -1.57,
+            self.human.j_left_elbow: -1.57,
+        }
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            target_pos = sitting_joints.get(joint_idx, 0)
+            p.resetJointState(self.human.body, joint_idx, target_pos, 0, physicsClientId=self.id)
+            p.changeDynamics(self.human.body, joint_idx, mass=0, physicsClientId=self.id)
+        
         self.init_env_variables()
         return self._get_obs()
 
@@ -194,3 +234,12 @@ class FeedingEnv(AssistiveEnv):
         target_pos, target_orient = p.multiplyTransforms(head_pos, head_orient, self.mouth_pos, [0, 0, 0, 1], physicsClientId=self.id)
         self.target_pos = np.array(target_pos)
         self.target.set_base_pos_orient(self.target_pos, [0, 0, 0, 1])
+
+    def _freeze_human(self):
+        """Re-apply kinematic state to keep human frozen."""
+        # Reset all joint velocities to zero
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            joint_state = p.getJointState(self.human.body, joint_idx, physicsClientId=self.id)
+            p.resetJointState(self.human.body, joint_idx, joint_state[0], 0, physicsClientId=self.id)
+        # Reset base velocity
+        p.resetBaseVelocity(self.human.body, [0, 0, 0], [0, 0, 0], physicsClientId=self.id)

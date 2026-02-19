@@ -53,10 +53,10 @@ class ArmManipulationEnv(AssistiveEnv):
         done = self.iteration >= 200
 
         if not self.human.controllable:
-            return obs, reward, done, info
+            return obs, reward, done, False, info
         else:
             # Co-optimization with both human and robot controllable
-            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': info, 'human': info}
+            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': False, 'human': False}, {'robot': info, 'human': info}
 
     def get_total_force(self):
         tool_right_force = np.sum(self.tool_right.get_contact_points()[-1])
@@ -124,7 +124,8 @@ class ArmManipulationEnv(AssistiveEnv):
 
         p.setGravity(0, 0, -1, physicsClientId=self.id)
         if not self.robot.mobile:
-            self.robot.set_gravity(0, 0, 0)
+            for joint_idx in self.robot.controllable_joint_indices:
+                p.changeDynamics(self.robot.body, joint_idx, mass=0, physicsClientId=self.id)
 
         # Add small variation in human joint positions
         motor_indices, motor_positions, motor_velocities, motor_torques = self.human.get_motor_joint_states()
@@ -176,9 +177,12 @@ class ArmManipulationEnv(AssistiveEnv):
             self.robot.set_gripper_open_position(self.robot.left_gripper_indices, self.robot.gripper_pos[self.task], set_instantly=True)
 
         p.setGravity(0, 0, -9.81, physicsClientId=self.id)
-        self.tool_right.set_gravity(0, 0, 0)
+        # Disable gravity on tool links by setting mass to 0
+        for link_idx in range(p.getNumJoints(self.tool_right.body, physicsClientId=self.id)):
+            p.changeDynamics(self.tool_right.body, link_idx, mass=0, physicsClientId=self.id)
         if not self.robot.has_single_arm:
-            self.tool_left.set_gravity(0, 0, 0)
+            for link_idx in range(p.getNumJoints(self.tool_left.body, physicsClientId=self.id)):
+                p.changeDynamics(self.tool_left.body, link_idx, mass=0, physicsClientId=self.id)
 
         # Enable rendering
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.id)

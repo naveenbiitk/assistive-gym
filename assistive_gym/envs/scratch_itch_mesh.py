@@ -89,10 +89,22 @@ class ScratchItchMeshEnv(ScratchItchEnv):
         # Initialize the tool in the robot's gripper
         self.tool.init(self.robot, self.task, self.directory, self.id, self.np_random, right=False, mesh_scale=[0.001]*3)
 
+        # For fixed-base robots, disable gravity on arm links by setting mass to 0
         if not self.robot.mobile:
-            self.robot.set_gravity(0, 0, 0)
-        self.human.set_gravity(0, 0, 0)
-        self.tool.set_gravity(0, 0, 0)
+            for joint_idx in self.robot.controllable_joint_indices:
+                p.changeDynamics(self.robot.body, joint_idx, mass=0, physicsClientId=self.id)
+        
+        # Completely freeze human in place
+        self.human.set_base_velocity(linear_velocity=[0, 0, 0], angular_velocity=[0, 0, 0])
+        # Disable all human joint motors to prevent shaking
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            p.setJointMotorControl2(self.human.body, joint_idx, p.POSITION_CONTROL, 
+                                   targetPosition=0, force=0, physicsClientId=self.id)
+            p.resetJointState(self.human.body, joint_idx, targetValue=0, targetVelocity=0, physicsClientId=self.id)
+        
+        # Disable gravity on tool links by setting mass to 0
+        for link_idx in range(p.getNumJoints(self.tool.body, physicsClientId=self.id)):
+            p.changeDynamics(self.tool.body, link_idx, mass=0, physicsClientId=self.id)
 
         # Enable rendering
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.id)

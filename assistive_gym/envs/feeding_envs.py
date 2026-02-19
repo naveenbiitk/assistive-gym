@@ -1,6 +1,6 @@
 from .feeding import FeedingEnv
 from .feeding_mesh import FeedingMeshEnv
-from .agents import pr2, baxter, sawyer, jaco, stretch, panda, human, human_mesh
+from .agents import pr2, baxter, sawyer, jaco, stretch, panda, human
 from .agents.pr2 import PR2
 from .agents.baxter import Baxter
 from .agents.sawyer import Sawyer
@@ -8,7 +8,6 @@ from .agents.jaco import Jaco
 from .agents.stretch import Stretch
 from .agents.panda import Panda
 from .agents.human import Human
-from .agents.human_mesh import HumanMesh
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from ray.tune.registry import register_env
 
@@ -83,6 +82,14 @@ class FeedingSawyerMeshEnv(FeedingMeshEnv):
 class FeedingJacoMeshEnv(FeedingMeshEnv):
     def __init__(self):
         super(FeedingJacoMeshEnv, self).__init__(robot=Jaco(robot_arm), human=HumanMesh())
+
+# Register non-Human versions
+register_env('assistive_gym:FeedingPR2-v1', lambda config: FeedingPR2Env())
+register_env('assistive_gym:FeedingBaxter-v1', lambda config: FeedingBaxterEnv())
+register_env('assistive_gym:FeedingSawyer-v1', lambda config: FeedingSawyerEnv())
+register_env('assistive_gym:FeedingJaco-v1', lambda config: FeedingJacoEnv())
+register_env('assistive_gym:FeedingStretch-v1', lambda config: FeedingStretchEnv())
+register_env('assistive_gym:FeedingPanda-v1', lambda config: FeedingPandaEnv())
 
 class FeedingStretchMeshEnv(FeedingMeshEnv):
     def __init__(self):

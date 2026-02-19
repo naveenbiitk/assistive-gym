@@ -103,7 +103,7 @@ class DressingEnv(AssistiveEnv):
         info = {'total_force_on_human': total_force_on_human, 'task_success': int(self.task_success >= self.config('task_success_threshold')), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
         done = False
 
-        return obs, reward, done, info
+        return obs, reward, done, False, info
 
     def _get_obs(self, forces, forces_human):
         end_effector_pos, end_effector_orient = self.robot.get_pos_orient(self.robot.left_end_effector)
@@ -243,6 +243,16 @@ class DressingEnv(AssistiveEnv):
             p.stepSimulation(physicsClientId=self.id)
 
         p.setGravity(0, 0, -9.81, physicsClientId=self.id)
+        if not self.robot.mobile:
+            for joint_idx in self.robot.controllable_joint_indices:
+                p.changeDynamics(self.robot.body, joint_idx, mass=0, physicsClientId=self.id)
+        # Completely freeze human in place
+        self.human.set_base_velocity(linear_velocity=[0, 0, 0], angular_velocity=[0, 0, 0])
+        # Disable all human joint motors to prevent shaking
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            p.setJointMotorControl2(self.human.body, joint_idx, p.POSITION_CONTROL, 
+                                   targetPosition=0, force=0, physicsClientId=self.id)
+            p.resetJointState(self.human.body, joint_idx, targetValue=0, targetVelocity=0, physicsClientId=self.id)
 
         return self._get_obs([0]*6, [0, 0])
 

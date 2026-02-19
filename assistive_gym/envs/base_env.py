@@ -42,7 +42,7 @@ class BaseEnv:
         p.setTimeStep(self.time_step, physicsClientId=self.id)
         # Disable real time simulation so that the simulation only advances when we call stepSimulation
         p.setRealTimeSimulation(0, physicsClientId=self.id)
-        p.setGravity(0, 0, self.gravity, physicsClientId=self.id)
+        p.setGravity(0, 0, -9.8, physicsClientId=self.id)
         self.agents = []
         self.last_sim_time = None
         self.iteration = 0

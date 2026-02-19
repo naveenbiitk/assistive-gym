@@ -30,6 +30,8 @@ class BedBathingJacoEnv(BedBathingEnv):
 
 class BedBathingStretchEnv(BedBathingEnv):
     def __init__(self):
+        print(f"DEBUG: BedBathingStretchEnv.__init__ called")
+        print(f"DEBUG: Creating Stretch with controllable_joints='wheel_{robot_arm}'")
         super(BedBathingStretchEnv, self).__init__(robot=Stretch('wheel_'+robot_arm), human=Human(human_controllable_joint_indices, controllable=False))
 
 class BedBathingPandaEnv(BedBathingEnv):
@@ -65,4 +67,12 @@ class BedBathingPandaHumanEnv(BedBathingEnv, MultiAgentEnv):
     def __init__(self):
         super(BedBathingPandaHumanEnv, self).__init__(robot=Panda(robot_arm), human=Human(human_controllable_joint_indices, controllable=True))
 register_env('assistive_gym:BedBathingPandaHuman-v1', lambda config: BedBathingPandaHumanEnv())
+
+# Register non-Human versions
+register_env('assistive_gym:BedBathingPR2-v1', lambda config: BedBathingPR2Env())
+register_env('assistive_gym:BedBathingBaxter-v1', lambda config: BedBathingBaxterEnv())
+register_env('assistive_gym:BedBathingSawyer-v1', lambda config: BedBathingSawyerEnv())
+register_env('assistive_gym:BedBathingJaco-v1', lambda config: BedBathingJacoEnv())
+register_env('assistive_gym:BedBathingStretch-v1', lambda config: BedBathingStretchEnv())
+register_env('assistive_gym:BedBathingPanda-v1', lambda config: BedBathingPandaEnv())
 

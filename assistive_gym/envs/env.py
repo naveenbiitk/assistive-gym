@@ -27,6 +27,8 @@ class AssistiveEnv(gym.Env):
         self.gui = False
         self.gpu = False
         self.view_matrix = None
+        self.human = human
+        self.robot = robot
         self.seed(seed)
         if render:
             self.render()
@@ -36,10 +38,59 @@ class AssistiveEnv(gym.Env):
 
         self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets')
         self.human_creation = HumanCreation(self.id, np_random=self.np_random, cloth=('dressing' in task))
-        self.human_limits_model = load_model(os.path.join(self.directory, 'realistic_arm_limits_model.h5'))
+        
+        #self.human_limits_model = load_model(os.path.join(self.directory, 'realistic_arm_limits_model.h5'))
+        self.human_limits_model = load_model(os.path.join(self.directory, 'realistic_arm_limits_model.h5'), compile=False)
+
+        # ----------------------------
+        # Action space + multipliers
+        # ----------------------------
         self.action_robot_len = len(robot.controllable_joint_indices) if robot is not None else 0
-        self.action_human_len = len(human.controllable_joint_indices) if human is not None and human.controllable else 0
-        self.action_space = spaces.Box(low=np.array([-1.0]*(self.action_robot_len+self.action_human_len), dtype=np.float32), high=np.array([1.0]*(self.action_robot_len+self.action_human_len), dtype=np.float32), dtype=np.float32)
+        self.action_human_len = (
+            len(human.controllable_joint_indices)
+            if human is not None and getattr(human, "controllable", False)
+            else 0
+        )
+
+        self.action_space = spaces.Box(
+            low=np.array(
+                [-1.0] * (self.action_robot_len + self.action_human_len),
+                dtype=np.float32,
+            ),
+            high=np.array(
+                [1.0] * (self.action_robot_len + self.action_human_len),
+                dtype=np.float32,
+            ),
+            dtype=np.float32,
+        )
+
+        # Create multiplier based on lengths to guarantee shape matches action_space
+        robot_mult = np.ones(self.action_robot_len, dtype=np.float32)
+        human_mult = np.ones(self.action_human_len, dtype=np.float32)
+        self.action_multiplier = np.concatenate([robot_mult, human_mult], axis=0)
+
+        # --- DEBUGGING START ---
+        print("\n=== DEBUGGING CRASH ===")
+        print(f"1. action_space shape: {self.action_space.shape}")
+        print(f"2. action_multiplier shape: {self.action_multiplier.shape}")
+        print(f"3. Robot Len: {self.action_robot_len}")
+        print(f"4. Human Len: {self.action_human_len}")
+        if robot is not None:
+            print(f"5. robot.controllable_joint_indices: {robot.controllable_joint_indices}")
+            print(f"   robot.controllable_joints param: {robot.controllable_joints}")
+            print(f"   robot.mobile: {robot.mobile}")
+            print(f"   robot.wheel_joint_indices: {robot.wheel_joint_indices}")
+            print(f"   robot.right_arm_joint_indices: {robot.right_arm_joint_indices}")
+            print(f"   robot.left_arm_joint_indices: {robot.left_arm_joint_indices}")
+        else:
+            print("5. robot is None")
+        if human is not None:
+            print(f"6. human.controllable: {getattr(human, 'controllable', None)}")
+            print(f"7. human.controllable_joint_indices: {len(human.controllable_joint_indices)}")
+        else:
+            print("6. human is None")
+        # --- DEBUGGING END ---
+
         self.obs_robot_len = obs_robot_len
         self.obs_human_len = obs_human_len if human is not None and human.controllable else 0
         self.observation_space = spaces.Box(low=np.array([-1000000000.0]*(self.obs_robot_len+self.obs_human_len), dtype=np.float32), high=np.array([1000000000.0]*(self.obs_robot_len+self.obs_human_len), dtype=np.float32), dtype=np.float32)
@@ -90,15 +141,6 @@ class AssistiveEnv(gym.Env):
 
     def reset(self):
         p.resetSimulation(physicsClientId=self.id)
-        if not self.gui:
-            # Reconnect the physics engine to forcefully clear memory when running long training scripts
-            self.disconnect()
-            self.id = p.connect(p.DIRECT)
-            self.util = Util(self.id, self.np_random)
-        if self.gpu:
-            self.util.enable_gpu()
-        # Configure camera position
-        p.resetDebugVisualizerCamera(cameraDistance=1.75, cameraYaw=-25, cameraPitch=-45, cameraTargetPosition=[-0.2, 0, 0.4], physicsClientId=self.id)
         p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 0, physicsClientId=self.id)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0, physicsClientId=self.id)
         p.setTimeStep(self.time_step, physicsClientId=self.id)
@@ -110,6 +152,16 @@ class AssistiveEnv(gym.Env):
         self.iteration = 0
         self.forces = []
         self.task_success = 0
+
+        if not self.gui:
+            # Reconnect the physics engine to forcefully clear memory when running long training scripts
+            self.disconnect()
+            self.id = p.connect(p.DIRECT)
+            self.util = Util(self.id, self.np_random)
+        if self.gpu:
+            self.util.enable_gpu()
+        # Configure camera position
+        p.resetDebugVisualizerCamera(cameraDistance=1.75, cameraYaw=-25, cameraPitch=-45, cameraTargetPosition=[-0.2, 0, 0.4], physicsClientId=self.id)
 
     def build_assistive_env(self, furniture_type=None, fixed_human_base=True, human_impairment='random', gender='random'):
         # Build plane, furniture, robot, human, etc. (just like world creation)
@@ -139,8 +191,9 @@ class AssistiveEnv(gym.Env):
             self.observation_space.__init__(low=-np.ones(obs_len, dtype=np.float32)*1000000000, high=np.ones(obs_len, dtype=np.float32)*1000000000, dtype=np.float32)
             self.update_action_space()
             # Define action/obs lengths
-            self.action_robot_len = len(self.robot.controllable_joint_indices)
-            self.action_human_len = len(self.human.controllable_joint_indices) if self.human.controllable else 0
+            self.action_robot_len = len(self.robot.controllable_joint_indices) if self.robot is not None else 0
+            self.action_human_len = len(self.human.controllable_joint_indices) if (self.human is not None and self.human.controllable) else 0
+            print(f"DEBUG init_env_variables: action_robot_len={self.action_robot_len}, action_human_len={self.action_human_len}, action_space.shape={self.action_space.shape}")
             self.obs_robot_len = len(self._get_obs('robot'))
             self.obs_human_len = len(self._get_obs('human'))
             self.action_space_robot = spaces.Box(low=np.array([-1.0]*self.action_robot_len, dtype=np.float32), high=np.array([1.0]*self.action_robot_len, dtype=np.float32), dtype=np.float32)
@@ -150,7 +203,11 @@ class AssistiveEnv(gym.Env):
 
     def update_action_space(self):
         action_len = np.sum([len(a.controllable_joint_indices) for a in self.agents if not isinstance(a, Human) or a.controllable])
+        agent_info = [(type(a).__name__, len(a.controllable_joint_indices)) for a in self.agents]
+        print(f"DEBUG update_action_space: agents={agent_info}, action_len={action_len}")
         self.action_space.__init__(low=-np.ones(action_len, dtype=np.float32), high=np.ones(action_len, dtype=np.float32), dtype=np.float32)
+        # Also update action_multiplier to match the new action space size
+        self.action_multiplier = np.ones(action_len, dtype=np.float32)
 
     def create_human(self, controllable=False, controllable_joint_indices=[], fixed_base=False, human_impairment='random', gender='random', mass=None, radius_scale=1.0, height_scale=1.0):
         '''
@@ -185,7 +242,26 @@ class AssistiveEnv(gym.Env):
         self.iteration += 1
         self.forces = []
         actions = np.clip(actions, a_min=self.action_space.low, a_max=self.action_space.high)
-        actions *= action_multiplier
+
+        actions = np.asarray(actions, dtype=np.float32)
+
+        if self.action_multiplier.size == 0:
+            # No controllable actions expected in this env config
+            # If something still passes actions, ignore them safely.
+            return
+
+        if actions.shape[0] != self.action_multiplier.shape[0]:
+            raise ValueError(
+                f"Action length mismatch: got {actions.shape[0]}, expected {self.action_multiplier.shape[0]} "
+                f"(robot={self.action_robot_len}, human={self.action_human_len})"
+            )
+
+        actions *= self.action_multiplier
+
+
+
+
+        #actions *= self.action_multiplier
         action_index = 0
         for i, agent in enumerate(self.agents):
             needs_action = not isinstance(agent, Human) or agent.controllable
@@ -198,6 +274,9 @@ class AssistiveEnv(gym.Env):
                 if len(action) != agent_action_len:
                     print('Received agent actions of length %d does not match expected action length of %d' % (len(action), agent_action_len))
                     exit()
+            else:
+                # Human not controllable - set action to empty to avoid using stale action
+                action = np.array([])
             # Append the new action to the current measured joint angles
             agent_joint_angles = agent.get_joint_angles(agent.controllable_joint_indices)
             # Update the target robot/human joint angles based on the proposed action and joint limits
@@ -371,9 +450,16 @@ class AssistiveEnv(gym.Env):
     def create_spheres(self, radius=0.01, mass=0.0, batch_positions=[[0, 0, 0]], visual=True, collision=True, rgba=[0, 1, 1, 1]):
         sphere_collision = p.createCollisionShape(shapeType=p.GEOM_SPHERE, radius=radius, physicsClientId=self.id) if collision else -1
         sphere_visual = p.createVisualShape(shapeType=p.GEOM_SPHERE, radius=radius, rgbaColor=rgba, physicsClientId=self.id) if visual else -1
-        last_sphere_id = p.createMultiBody(baseMass=mass, baseCollisionShapeIndex=sphere_collision, baseVisualShapeIndex=sphere_visual, basePosition=[0, 0, 0], useMaximalCoordinates=False, batchPositions=batch_positions, physicsClientId=self.id)
+        sphere_ids = p.createMultiBody(baseMass=mass, baseCollisionShapeIndex=sphere_collision, baseVisualShapeIndex=sphere_visual, basePosition=[0, 0, 0], useMaximalCoordinates=False, batchPositions=batch_positions, physicsClientId=self.id)
+        
+        # Handle both single body (int) and multiple bodies (tuple/list) return from createMultiBody
+        if isinstance(sphere_ids, (list, tuple)):
+            body_ids = sphere_ids
+        else:
+            body_ids = [sphere_ids]
+        
         spheres = []
-        for body in list(range(last_sphere_id-len(batch_positions)+1, last_sphere_id+1)):
+        for body in body_ids:
             sphere = Agent()
             sphere.init(body, self.id, self.np_random, indices=-1)
             spheres.append(sphere)

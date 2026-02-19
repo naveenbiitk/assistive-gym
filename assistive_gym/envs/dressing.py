@@ -70,10 +70,10 @@ class DressingEnv(AssistiveEnv):
         done = self.iteration >= 200
 
         if not self.human.controllable:
-            return obs, reward, done, info
+            return obs, reward, done, False, info
         else:
             # Co-optimization with both human and robot controllable
-            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': info, 'human': info}
+            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': False, 'human': False}, {'robot': info, 'human': info}
 
     def _get_obs(self, agent=None):
         end_effector_pos, end_effector_orient = self.robot.get_pos_orient(self.robot.left_end_effector)
@@ -177,9 +177,19 @@ class DressingEnv(AssistiveEnv):
 
         p.setGravity(0, 0, -9.81/2, physicsClientId=self.id) # Let the cloth settle more gently
         if not self.robot.mobile:
-            self.robot.set_gravity(0, 0, 0)
-        self.human.set_gravity(0, 0, -1)
-        self.cloth_attachment.set_gravity(0, 0, 0)
+            for joint_idx in self.robot.controllable_joint_indices:
+                p.changeDynamics(self.robot.body, joint_idx, mass=0, physicsClientId=self.id)
+        self.human.set_base_velocity(linear_velocity=[0, 0, 0], angular_velocity=[0, 0, 0])
+        # Disable all human joint motors to prevent shaking
+        for joint_idx in range(p.getNumJoints(self.human.body, physicsClientId=self.id)):
+            p.setJointMotorControl2(self.human.body, joint_idx, p.POSITION_CONTROL, 
+                                   targetPosition=0, force=0, physicsClientId=self.id)
+            p.resetJointState(self.human.body, joint_idx, targetValue=0, targetVelocity=0, physicsClientId=self.id)
+        
+        # Disable gravity on cloth attachment by setting mass to 0
+        if hasattr(self, 'cloth_attachment') and self.cloth_attachment:
+            for link_idx in range(p.getNumJoints(self.cloth_attachment.body, physicsClientId=self.id)):
+                p.changeDynamics(self.cloth_attachment.body, link_idx, mass=0, physicsClientId=self.id)
 
         p.setPhysicsEngineParameter(numSubSteps=8, physicsClientId=self.id)
 
