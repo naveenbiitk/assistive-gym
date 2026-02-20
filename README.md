@@ -1,6 +1,6 @@
 # Assistive Gym v1.0
 #### v1.0 (this branch) has been released! See the feature list below for what is new in v1.0.  
-#### Assistive Gym in also now supported in Google Colab! For example: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1qFbjuq5lFxPijyw4PFUiZw2sFpXTR7ok?usp=sharing)  
+#### Assistive Gym in also now supported in Google Colab! For example: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1ztsBiQw6_zGHcxk-H4Q_j0UM4lGQSZrh?usp=sharing)  
 #### See the [Wiki](https://github.com/Healthcare-Robotics/assistive-gym/wiki/7.-Google-Colab) for all available Google Colab examples.
 ***
 
