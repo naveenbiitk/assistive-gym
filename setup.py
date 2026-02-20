@@ -16,26 +16,22 @@ for root, dirs, files in os.walk(directory):
 setup(name='assistive-gym',
     version='1.0',
     packages=find_packages(),
-    python_requires='>=3.8',
+    python_requires='>=3.10',
     install_requires=[
-        # Keep core/runtime deps lightweight and resolver-friendly (e.g., Colab).
-        'gym>=0.26,<0.27',
-        'gymnasium>=1.0,<2.0',
-        'pybullet>=3.2.5',
-        'numpy>=1.22,<2.1',
-        'trimesh>=3.9',
-        'h5py>=3.8',
-        'numpngw>=0.1.4',
-        'screeninfo==0.6.1' if sys.version_info >= (3, 6) else 'screeninfo==0.2',
+        # ---------- core runtime (needed by assistive_gym at import time) ----------
+        'gym>=0.25,<=0.26.2',       # env API; <=0.25.2 keeps Colab's dopamine-rl happy
+        'pybullet>=3.2.5',          # physics sim
+        'numpy>=1.22,<2.1',         # Colab's numba needs <2.1
+        'screeninfo==0.6.1',        # monitor detection (base_env, env)
+        'keras>=3.0',               # loads arm-limits model (human_creation)
+        'ray[rllib]>=2.9',          # all *_envs.py import ray at top level
+        'scipy>=1.9',               # human.py spatial transforms
+        'numpngw>=0.1.4',           # learn.py animated-png writer
+        # ---------- indirect / backend for keras ----------
+        # tensorflow is NOT imported directly; keras needs a backend.
+        # On Colab TF 2.19.x is pre-installed — do NOT force 2.20.
+        'tensorflow>=2.16,<2.21',
     ],
-    extras_require={
-        # Optional training stack (install only when needed).
-        'train': [
-            'ray[rllib]>=2.9',
-            'tensorflow>=2.19,<2.20',
-            'keras>=3.0',
-        ],
-    },
     # description='Physics simulation for assistive robotics and human-robot interaction.',
     # long_description=long_description,
     # mention extra lib installed;
